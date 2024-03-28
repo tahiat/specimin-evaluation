@@ -34,8 +34,9 @@
             }
         ],
         "cf_version": "3.40.0",
-        "java_version": "",
-        "note": ""
+        "java_version": "jdk-17",
+        "note": "",
+        "bug_type": "crash"
     },
     {
         "issue_id" : "cf-6077",
@@ -54,7 +55,8 @@
         ],
         "cf_version": "3.36.0",
         "java_version": "",
-        "note": ""
+        "note": "",
+        "bug_type": "error"
     },
     {
         "issue_id" : "cf-6060",
@@ -77,7 +79,7 @@
     },
     {
         "issue_id" : "cf-6030",
-        "url": "https://github.com/jacek-lewandowski/cassandra.git",
+        "url": "https://github.com/tahiat/cassandra.git",
         "branch": "cf-testing",
         "commit_hash": "",
         "project_name": "cassandra",
@@ -96,7 +98,7 @@
     },
     {
         "issue_id" : "cf-6030b",
-        "url": "https://github.com/jacek-lewandowski/cassandra.git",
+        "url": "https://github.com/tahiat/cassandra.git",
         "branch": "cf-testing",
         "commit_hash": "",
         "project_name": "cassandra",
@@ -116,7 +118,7 @@
     {
         "issue_id" : "cf-6019",
         "url": "https://github.com/tahiat/kafka-sensors.git",
-        "branch": "specimin-test",
+        "branch": "cf-6019",
         "commit_hash": "",
         "project_name": "kafka-sensors",
         "build_command": "bazel test //src/test/...",
@@ -130,7 +132,8 @@
         ],
         "cf_version": "3.35.0",
         "java_version": "jdk-17",
-        "note": ""
+        "note": "",
+        "bug_type": "crash"
     },
     {
         "issue_id" : "cf-4614",
@@ -149,7 +152,8 @@
         ],
         "cf_version": "3.12.0",
         "java_version": "jdk-11",
-        "note": ""
+        "note": "",
+        "bug_type": "false_positive"
     },
     {
         "issue_id" : "cf-3850",
@@ -168,7 +172,8 @@
         ],
         "cf_version": "3.7.1",
         "java_version": "",
-        "note": "Condsider adding Util.transform method in target method."
+        "note": "Condsider adding Util.transform method in target method.",
+        "bug_type": "crash"
     },
     {
         "issue_id" : "cf-577",

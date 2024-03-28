@@ -6,6 +6,7 @@ import shutil
 from Keyvalue import JsonKeys
 from Result import Result
 from report_builder import TableGenerator
+from exception_data import ExceptionData
 
 issue_folder_dir = 'ISSUES'
 specimin_input = 'input'
@@ -15,6 +16,7 @@ specimin_source_url = 'https://github.com/kelloggm/specimin.git'
 TIMEOUT_DURATION = 300
 specimin_env_var = "SPECIMIN"
 json_status_file_name = "target_status.json"
+minimized_program_build_log_file = "build_log.txt"
 
 def read_json_from_file(file_path):
     '''
@@ -81,12 +83,12 @@ def create_issue_directory(issue_container_dir, issue_id):
     os.makedirs(issue_directory_name, exist_ok=True)
 
     specimin_input_dir = os.path.join(issue_directory_name, specimin_input)
-    specimin_output_dir = os.path.join(issue_directory_name, specimin_output)
+    #specimin_output_dir = os.path.join(issue_directory_name, specimin_output)
 
     os.makedirs(specimin_input_dir, exist_ok=True)
-    if os.path.exists(specimin_output):
-        shutil.rmtree(specimin_output)
-    os.makedirs(specimin_output_dir, exist_ok=True)
+    #if os.path.exists(specimin_output):
+    #     shutil.rmtree(specimin_output)
+    #os.makedirs(specimin_output_dir, exist_ok=True)
     return specimin_input_dir
 
 
@@ -237,7 +239,11 @@ def build_specimin_command(project_name: str,
     if not os.path.isabs(target_base_dir_path):
         raise ValueError("Invalid argument: target_base_dir_path must be an absolute path")
 
-    output_dir = os.path.join(target_base_dir_path, specimin_output)
+    output_dir = os.path.join(target_base_dir_path, specimin_output, project_name, "src", "main", "java")
+
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+
     root_dir = os.path.join(target_base_dir_path, specimin_input, project_name, root_dir)
     root_dir = root_dir.rstrip('/') + os.sep
 
@@ -350,11 +356,114 @@ def performEvaluation(issue_data) -> Result:
         specimin_command = build_specimin_command(repo_name, os.path.join(issue_folder_abs_dir, issue_id), issue_data[JsonKeys.ROOT_DIR.value], issue_data[JsonKeys.TARGETS.value])
         result = run_specimin(issue_id ,specimin_command, specimin_path)
     else:
-        specimin_command = build_specimin_command(repo_name, os.path.join(issue_folder_abs_dir, issue_id),issue_data[JsonKeys.ROOT_DIR.value], issue_data[JsonKeys.TARGETS.value])
+        specimin_command = build_specimin_command(repo_name, os.path.join(issue_folder_abs_dir, issue_id), issue_data[JsonKeys.ROOT_DIR.value], issue_data[JsonKeys.TARGETS.value])
         result = run_specimin(issue_id ,specimin_command, os.path.join(issue_folder_abs_dir, specimin_project_name))
     
     print(f"{result.name} - {result.status}")
+
+    # build script is shipped with input program. It exists in the "specimin" directory of the input program's root directory.
+    # Coping the build script to the output directory of the minimized program.
+    build_script_path = os.path.join(issue_folder_abs_dir, issue_id, specimin_input, repo_name, specimin_project_name, "build.gradle")
+
+    if not os.path.exists(build_script_path):
+        return result
+    build_script_destination_path = os.path.join(issue_folder_abs_dir, issue_id, specimin_output, repo_name, "build.gradle")
+
+    copy_build_script = f"cp {build_script_path} {build_script_destination_path}"
+    subprocess.run(copy_build_script, shell=True)
+    
+    #../ISSUES/cf-xx/output/projectname/build_log.txt
+    log_file = os.path.join(issue_folder_abs_dir, issue_id, specimin_output, repo_name, minimized_program_build_log_file)
+
+    if os.path.exists(log_file):
+        os.remove(log_file)
+
+    # Open the log file in write mode
+    with open(log_file, "w") as log_file_obj:
+        build_status = subprocess.run(f"./gradlew -b  {build_script_destination_path} compileJava", cwd = os.path.abspath("resources"), shell=True, stderr=log_file_obj)
+        print(f"{issue_id} Minimized program gradle build status = {build_status}")
+
+    expected_log_file = os.path.join(issue_folder_abs_dir, issue_id, specimin_input, repo_name, specimin_project_name, "expected_log.txt")
+    if (JsonKeys.BUG_TYPE.value in issue_data and issue_data[JsonKeys.BUG_TYPE.value] == "crash"):
+        status = compare_crash_log(expected_log_file, log_file)
+        result.set_preservation_status(status)
     return result
+
+
+def get_exception_data(log_file_data_list: list):
+    '''
+    Parse the exception data from the log file
+
+    Returns:
+        exception_data (ExceptionData): exception data
+    '''
+
+    return_data = []
+    cf_crash_line = [line_no for line_no, line in enumerate(log_file_data_list) if line.lstrip().startswith('; The Checker Framework crashed.')]
+    if len(cf_crash_line) == 0:
+        return None
+
+    for line_no in cf_crash_line: # if multiple crash location found, one shoud match exactly with the expected crash information
+        crashed_class_name_line = -1
+        for i in range(line_no, line_no + 5): # should be immediate next line of crash line
+            if log_file_data_list[i].strip().startswith("Compilation unit:"):
+                crashed_class_name_line = i
+                break
+        if crashed_class_name_line == -1:
+            continue  # start looking for next crash location
+        class_name_abs_path = log_file_data_list[crashed_class_name_line].split(" ")[-1]
+        crashed_class_name = os.path.basename(class_name_abs_path)
+
+        exception_line = -1
+        for i in range(crashed_class_name_line, crashed_class_name_line + 5): # should be immediate next line of crash line
+            if log_file_data_list[i].strip().startswith("Exception:"):
+                exception_line = i
+                break
+        exception_stack = [] #compare it with actual stack trace
+        exception_cause = (log_file_data_list[exception_line].split(":")[-1]).strip()
+        for i in range(exception_line + 1, exception_line + 6):
+            if log_file_data_list[i].lstrip().startswith("at"):
+                exception_stack.append(log_file_data_list[i].split()[-1].strip())
+        
+        if crashed_class_name != None and exception_cause != None and len(exception_stack) > 0:
+            exception_data = ExceptionData(crashed_class_name, exception_cause, exception_stack)
+            return_data.append(exception_data)
+
+    return return_data
+
+def compare_crash_log(expected_log_path, actual_log_path):
+    '''
+    Compare the crash log of the minimized program with the expected crash log
+    '''
+
+    with open(expected_log_path, "r") as file:
+        expected_content = file.read()
+
+    with open(actual_log_path, "r") as file:
+        actual_content = file.read()
+    
+    expected_lines = expected_content.split('\n')
+    actual_lines = actual_content.split('\n')
+
+    expected_crash_datas = get_exception_data(expected_lines) # there should be 1 crash data
+    actual_crash_data = get_exception_data(actual_lines)
+
+    if expected_crash_datas != None or len(expected_crash_datas) != 0:
+        expected_crash_data = expected_crash_datas[0]
+    else:
+        return False # no crash data found in the expected log file
+
+    is_crash_matched = True
+    for data in actual_crash_data:
+        is_crash_matched = True
+        if expected_crash_data.exception != data.exception or expected_crash_data.exception_class != data.exception_class:
+            is_crash_matched = False
+            continue
+        if expected_crash_data.stack_trace != data.stack_trace:
+            is_crash_matched = False
+            continue
+
+    return is_crash_matched
 
 
 def main():
@@ -383,7 +492,7 @@ def main():
 
     parsed_data = read_json_from_file(json_file_path)
 
-    evaluation_results: list[Result] = []
+    evaluation_results = []
     json_status: dict[str, str] = {} # Contains PASS/FAIL status of targets to be printed as a json file 
     if parsed_data:
         for issue in parsed_data:
@@ -393,6 +502,10 @@ def main():
             evaluation_results.append(result)
             json_status[issue_id] = result.status
             print((f"{issue_id} <========= execution Ends."))
+            # task of crash generation on minimized program. 
+            # copy the build script from the input target specimin directory
+            
+            
 
 
     report_generator: TableGenerator = TableGenerator(evaluation_results)
@@ -404,12 +517,15 @@ def main():
         json.dump(json_status, json_file, indent= 2)
 
     print("\n\n\n\n")
-    print(f"issue_name    |    status    |    reason")
+    print(f"issue_name    |    status    |  Fail reason  | preservation_status")
     print("--------------------------------------------")
     case = 1
     for minimization_result in evaluation_results:
-        print(f"({case}){minimization_result.name}    |    {minimization_result.status}     |    {minimization_result.reason}")
+        print(f"({case}){minimization_result.name}    |    {minimization_result.status}     |    {minimization_result.reason}      | {minimization_result.preservation_status}")
         case +=1
+
+    
+
     
 
 if __name__ == "__main__":
